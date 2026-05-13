@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Neon Typing Arcade — Grundreihe V3.1</title>
+    <title>Neon Typing Arcade — Grundreihe V3.2</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&display=swap');
         :root { --cyan:#00f5ff;--pink:#ff2bd6;--purple:#9c62ff;--yellow:#fff066;--green:#37ff9f;--red:#ff4e6a;--white:#f5fbff;--muted:#9db0c0;--orange:#ff9a3d;--panel:rgba(7,12,28,0.96); }
@@ -102,7 +102,7 @@
 </head>
 <body>
     <h1 class="page-title">Arcade Trainer</h1>
-    <p class="page-subtitle">Lektion 1 — Grundreihe: A S D F &nbsp; J K L Ö &nbsp;(V3.1)</p>
+    <p class="page-subtitle">Lektion 1 — Grundreihe: A S D F &nbsp; J K L Ö &nbsp;(V3.2)</p>
 
     <div id="hudBar">
         <div class="hud-cell" id="hMode">MODE: LOBBY</div>
@@ -188,21 +188,23 @@
 
     <script>
     /* ═══════════════════════════════════════════════
-       PROTOTYP 3.1 — Erwachsenen-Geschwindigkeitsprofil
+       PROTOTYP 3.2 — Stetige Progression (kein Cap)
        ═══════════════════════════════════════════════
-       Iteration über V3:
-       - Progressionskurve weiter verkürzt (~30% kompakter)
-         → mehr Levelwechsel pro Spielminute
-         → Endwert wird früher erreicht, kürzere Rundenzeit
-       - Endwerte aller drei Modi nochmals angehoben
-       - Type Dash: Sprungphysik snappier (Geometry-Dash-Feeling)
-         gravity 0.095 → 0.15, jumpForce -7.4 → -7.8
-         → weniger schwebend, direkterer Bezug zur Tastatureingabe
+       Iteration über V3.1:
+       - Lineare Interpolation der Speed-Werte zwischen
+         den definierten Stufen → wirklich kontinuierlich
+         schneller, keine wahrnehmbaren Sprünge mehr.
+       - Nach Level 8 läuft die Progression linear weiter
+         (Slope der letzten Stufe wird extrapoliert).
+       - Weiche Caps erst bei extremen Werten erreicht:
+         Astro 4.5, Beat 6.5, Dash 9.0 → Endgame für Profis.
+       - Neue Schwierigkeitslabels: Profi (L9–12), Endgame (L13+).
 
-       Basis-Änderungen aus V2.1 → V3 bleiben erhalten:
+       Was in V3.1 schon drin war und unverändert bleibt:
        - Startwerte moderat erhöht (Marc-Differenzierung)
        - Endwerte deutlich erhöht (Cyril-Bezug zum Challenge Gate)
-       - Type-Dash-Wortpools nach Lektion-1-Phasen unverändert
+       - Type-Dash Sprung snappier (gravity 0.15, jumpForce -7.8)
+       - Type-Dash Wortpools nach Lektion-1-Phasen
        ═══════════════════════════════════════════════ */
 
     const C = document.getElementById('gameCanvas');
@@ -275,10 +277,82 @@
         ]
     };
 
-    function lvl(g,sc){ const c=LCFG[g]; let r=c[0],l=1; for(let i=c.length-1;i>=0;i--) if(sc>=c[i].sn){r=c[i];l=i+1;break;} return{...r,level:l}; }
-    function nxtSc(g,sc){ for(const c of LCFG[g]) if(sc<c.sn) return c.sn; return null; }
-    function curSc(g,sc){ let s=0; for(let i=LCFG[g].length-1;i>=0;i--) if(sc>=LCFG[g][i].sn){s=LCFG[g][i].sn;break;} return s; }
-    function diffLbl(g,sc){ const l=lvl(g,sc).level; return l<=3?'Leicht':l<=5?'Mittel':'Schwer'; }
+    /* V3.2: lvl() interpoliert die Speed-Werte zwischen den
+       Stufen linear. Nach Level 8 wird die Progression mit
+       dem Slope der letzten Stufe extrapoliert und durch
+       weiche Caps begrenzt. Diskrete Felder (words, types,
+       wm) bleiben stufenweise. */
+    function lvl(g, sc) {
+        const c = LCFG[g];
+        let curr = c[0], next = null, idx = 0;
+        for (let i = c.length - 1; i >= 0; i--) {
+            if (sc >= c[i].sn) { curr = c[i]; next = c[i+1] || null; idx = i; break; }
+        }
+        const r = { ...curr, level: idx + 1 };
+        const SPEED_KEYS = ['speed','as','ns'];
+        const INV_KEYS = ['se','gap'];
+
+        if (next) {
+            // Stetige lineare Interpolation zwischen curr und next
+            const t = (sc - curr.sn) / (next.sn - curr.sn);
+            SPEED_KEYS.forEach(k => { if (k in curr && k in next) r[k] = curr[k] + (next[k] - curr[k]) * t; });
+            INV_KEYS.forEach(k => { if (k in curr && k in next) r[k] = curr[k] + (next[k] - curr[k]) * t; });
+        } else {
+            // Endlos-Extrapolation nach Level 8
+            const last = c[c.length - 1];
+            const prev = c[c.length - 2];
+            const stepWidth = last.sn - prev.sn;
+            const extra = (sc - last.sn) / stepWidth;
+            const CAPS = { speed: 9.0, as: 4.5, ns: 6.5 };
+            const FLOORS = { se: 16, gap: 170 };
+            SPEED_KEYS.forEach(k => {
+                if (k in last && k in prev) {
+                    const slope = last[k] - prev[k];
+                    r[k] = Math.min(CAPS[k], last[k] + slope * extra);
+                }
+            });
+            INV_KEYS.forEach(k => {
+                if (k in last && k in prev) {
+                    const slope = last[k] - prev[k]; // negativ
+                    r[k] = Math.max(FLOORS[k], last[k] + slope * extra);
+                }
+            });
+            r.level = c.length + Math.floor(extra);
+        }
+        return r;
+    }
+    function nxtSc(g, sc) {
+        const c = LCFG[g];
+        for (const cfg of c) if (sc < cfg.sn) return cfg.sn;
+        // Endlos: nächste virtuelle Stufe
+        const last = c[c.length - 1];
+        const prev = c[c.length - 2];
+        const stepWidth = last.sn - prev.sn;
+        const extra = Math.floor((sc - last.sn) / stepWidth);
+        return last.sn + (extra + 1) * stepWidth;
+    }
+    function curSc(g, sc) {
+        const c = LCFG[g];
+        let s = 0;
+        for (let i = c.length - 1; i >= 0; i--) {
+            if (sc >= c[i].sn) { s = c[i].sn; break; }
+        }
+        const last = c[c.length - 1];
+        if (sc >= last.sn) {
+            const prev = c[c.length - 2];
+            const stepWidth = last.sn - prev.sn;
+            s = last.sn + Math.floor((sc - last.sn) / stepWidth) * stepWidth;
+        }
+        return s;
+    }
+    function diffLbl(g, sc) {
+        const l = lvl(g, sc).level;
+        if (l <= 3) return 'Leicht';
+        if (l <= 5) return 'Mittel';
+        if (l <= 8) return 'Schwer';
+        if (l <= 12) return 'Profi';
+        return 'Endgame';
+    }
 
     function motMsg(sc,a,nr){ if(nr) return '⭐ NEUER REKORD! Du wirst immer besser!'; if(a>=95) return 'Unglaubliche Genauigkeit!'; if(a>=85) return 'Sehr gut getippt! Weiter so!'; if(a>=70) return 'Guter Lauf!'; return 'Jeder Versuch zählt — Übung macht den Meister!'; }
     function strkMsg(r,t){ if(t>0&&r>=3) return `🔥 ${r} Runden gespielt! Noch ${t} Ticket${t>1?'s':''}.`; if(t>0) return `Noch ${t} Ticket${t>1?'s':''} — probier noch eine Runde!`; return 'Alle Tickets aufgebraucht!'; }
